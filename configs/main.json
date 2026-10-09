@@ -1,0 +1,17 @@
+{
+  "internal_center": "GDPH",
+  "seed": 55,
+  "epochs": 60,
+  "patience": 8,
+  "min_delta": 0.001,
+  "learning_rate": 0.00005,
+  "weight_decay": 0.001,
+  "patch_dropout": 0.2,
+  "adapter_dim": 64,
+  "adapter_dropout": 0.1,
+  "pairwise_ranking_weight": 0.05,
+  "pairwise_max_pairs": 64,
+  "pairwise_mpr_factor": 4.0,
+  "mpr_oversample_factor": 2.0,
+  "calibrate_cumulative": true
+}

@@ -1,0 +1,37 @@
+concepts:
+  viable_tumor:
+    - an H&E histopathology patch showing viable tumor tissue
+    - an H&E histopathology image of viable lung cancer cells
+  artifact:
+    - an H&E histopathology patch showing empty background or glass
+    - an H&E histopathology patch showing severe tissue folding or scanning artifact
+    - an H&E histopathology patch showing blood or hemorrhage without tumor
+  immune_inflamed:
+    - an H&E histopathology patch showing an immune-inflamed tumor microenvironment
+    - an H&E histopathology patch showing dense lymphocyte infiltration within tumor nests
+    - an H&E histopathology patch showing immune cells penetrating the tumor parenchyma
+  tls_like:
+    - an H&E histopathology patch showing a tertiary lymphoid structure-like lymphoid aggregate
+    - an H&E histopathology patch showing an organized lymphoid aggregate near tumor tissue
+    - an H&E histopathology patch showing a dense cluster of lymphocytes with a germinal-center-like appearance
+  immune_excluded:
+    - an H&E histopathology patch showing an immune-excluded tumor with lymphocytes confined to the surrounding stroma
+    - an H&E histopathology patch showing a tumor-stroma interface without lymphocyte penetration
+  immune_desert:
+    - an H&E histopathology patch showing an immune-desert tumor with very few lymphocytes
+    - an H&E histopathology patch showing dense viable tumor cells with little inflammatory infiltrate
+  necrosis:
+    - an H&E histopathology patch showing tumor-associated necrosis
+  fibrotic_stroma:
+    - an H&E histopathology patch showing fibrotic or desmoplastic tumor stroma
+
+# Upstream cache provenance; selection is not recomputed during training.
+selection:
+  min_patches_per_slide: 128
+  max_patches_per_slide: 512
+  top_fraction: 0.60
+  uncertainty_fraction: 0.20
+  random_fraction: 0.20
+  alpha_tissue: 0.50
+  beta_artifact: 0.50
+  softmax_temperature: 0.10
