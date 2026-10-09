@@ -3,10 +3,9 @@
 Concept-guided, image–clinical multiple-instance learning for ordered pathological
 response prediction from pretreatment H&E biopsies and baseline clinical variables.
 
-This repository contains the main network, training objective, cached-feature data
-interface, patient-level five-fold cross-validation, and a fixed-checkpoint evaluation
-entry point. Raw slides, clinical records, patch features, pretrained weights, and
-experiment results are not distributed.
+VLR-MIL combines frozen visual features, tissue concepts, spatial context, and
+baseline clinical information through hierarchical multiple-instance learning.
+An ordinal prediction head models Non-MPR, MPR-only, and pCR as ordered outcomes.
 
 ## Environment
 
@@ -19,13 +18,9 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-python -m unittest discover -s tests -v
 ```
 
-The tests generate temporary synthetic features and exercise all five folds and
-external inference. They do not access clinical data or produce research results.
-CONCH feature extraction is an upstream step and is not required to run these tests.
-See [implementation checks](VALIDATION.md) for numerical compatibility checks.
+Training consumes cached CONCH patch features and matching concept embeddings.
 
 ## Architecture
 
@@ -76,10 +71,7 @@ q2 = sigmoid(s − c2)       P(pCR)
 p  = [1 − q1, q1 − q2, q2]
 ```
 
-The unused legacy fusion gate and head embedding projection are retained only for
-state-dict and random-initialization compatibility; they do not affect this forward path.
-
-## Data contract
+## Data preparation
 
 Supply one CSV row per slide. Multiple slides of a patient must have the same
 clinical fields and outcome. Patient identifiers must be stable across manifests.
@@ -87,7 +79,7 @@ clinical fields and outcome. Patient identifiers must be stable across manifests
 | Field | Encoding |
 |---|---|
 | `patient_id`, `slide_id` | Deidentified stable identifiers |
-| `center` | `GDPH` for internal development; distinct names for external cohorts |
+| `center` | Development cohort identifier; default `GDPH` |
 | `label` | `0` Non-MPR, `1` MPR-only, `2` pCR |
 | `pathology_type` | `LUAD`, `LUSC`, `Other`; blank for unknown |
 | `T_stage` | Baseline T0–T4; suffixes such as T2a collapse to T2 |
@@ -97,15 +89,15 @@ clinical fields and outcome. Patient identifiers must be stable across manifests
 | `smoking_status` | `0` never; `1` former >10 years; `2` current or cessation within 10 years; blank unknown |
 | `eligible_for_modeling` | Optional; only `1` rows are included when present |
 
-Resolve ambiguous raw PD-L1 notation upstream. The training interface never guesses
-whether a bare value of 1 means 1% or 100%. A source value `<1%` may be represented
-as 0.005 under the documented midpoint convention, not as an exact measurement.
+PD-L1 values are converted to a consistent fraction representation before training:
+1% corresponds to 0.01 and 100% to 1. A source value `<1%` is represented as 0.005
+under the interval-midpoint convention. Missing observations remain blank.
 
 Age and `log1p(100 * TPS)` are standardized using observed **training-fold** patients.
 Missing continuous inputs become zero after standardization; missing categories use
 index zero. Five missingness indicators distinguish missing values from observed zeros.
 TPS ≥1% and TPS ≥50% supply two additional binary inputs. Histology, T stage and
-smoking use category embeddings. Sex, N stage and composite clinical stage are not inputs.
+smoking use category embeddings.
 
 Cached files must have the layout `features/<center>/<slide_id>.npz`:
 
@@ -117,13 +109,14 @@ Cached files must have the layout `features/<center>/<slide_id>.npz`:
 | `selected` | N boolean mask; 1–512 selected patches |
 | `concept_names` | Optional ordered string array, checked when present |
 
-All arrays must use the same patch order. Cached selection is consumed as supplied:
-the training code does not recompute QC, text scores, semantic selection, or coordinates.
+All arrays use the same patch order. The `selected` mask specifies the patches in
+each slide bag and remains fixed during validation. Training applies patch dropout
+to this bag as a regularizer.
 Eight concepts, in order: viable tumor, artifact, immune-inflamed, TLS-like,
 immune-excluded, immune-desert, necrosis, fibrotic stroma. The concept embedding NPZ
 must contain `embeddings` of shape 8 × 512, in the same order and visual–text space.
-The input feature cache and embedding bank must be generated with the same upstream
-CONCH version and prompt definitions. See [concept prompts](configs/prompts.yaml).
+The feature cache and embedding bank use the same CONCH version, prompt definitions,
+and concept ordering. Feature extraction and concept scoring precede MIL training.
 
 ## Five-fold main experiment
 
@@ -139,14 +132,14 @@ bash scripts/run_fivefold.sh \
 Use `--device cpu --threads 4` for CPU execution. Add `--fold 0` to run one fold;
 omit `--fold` for all five folds. To change the seed or training hyperparameters,
 edit a copy of [configs/main.json](configs/main.json) and pass `--config`.
-Existing fold outputs are never silently overwritten.
+Each run uses a fresh output directory.
 
 Patients are sorted and stratified by outcome with `StratifiedKFold(5, shuffle=True,
 random_state=55)`. All slides from a patient remain together. Training accepts only
-the configured internal center; validation patients are excluded from that fold's
-optimizer updates and clinical preprocessing statistics. No external patients are added.
-The held-out fold supplies early stopping, as in conventional validation-based CV;
-this is not nested CV with a separate untouched internal test fold.
+the configured development center. Each fold uses four patient partitions for
+optimization and clinical preprocessing, and the remaining partition for validation
+and early stopping. This is validation-based five-fold cross-validation rather than
+nested cross-validation.
 
 | Setting | Default |
 |---|---|
@@ -169,48 +162,31 @@ MPR pair enrichment applies during pair subsampling, not as an unconditional 4×
 
 After checkpoint selection, optional cutpoint calibration uses **training-fold** scores
 and labels only, maximizing macro-F1, then balanced accuracy, MPR recall and QWK.
-External outcomes never select checkpoints, cutpoints or seeds. Set
-`calibrate_cumulative` to false to use only the learned cutpoints. Each trained fold's
-cutpoints are shared by all external cohorts evaluated with that fold.
+Set `calibrate_cumulative` to false to use only the cutpoints learned by gradient
+descent. The selected cutpoints and clinical preprocessing parameters are saved
+with the model checkpoint.
 
-## Outputs and independent external evaluation
+## Training outputs
 
 Each fold stores `best.pt`, `split.json`, `config.json`, `history.jsonl`,
 `validation_predictions.csv` and `metrics.json`. Running all five folds also produces
 one prediction per internal patient in `oof_predictions.csv` and pooled OOF metrics.
 Input hashes and code hashes are recorded in `input_provenance.json`.
 
-```bash
-.venv/bin/python -m vlr_mil.evaluate \
-  --checkpoint outputs/main_seed55/seed55_fold*/best.pt \
-  --manifest data/external_slides.csv \
-  --features-root features/conch_v1 \
-  --output outputs/external_evaluation \
-  --device cuda:0
-```
-
-Evaluate one external cohort per invocation. This command writes per-fold and
-unweighted probability-ensemble predictions and metrics; it does not select the best
-fold using external results. Development-center records or overlapping patient IDs
-are rejected. Checkpoints contain preprocessing parameters and cutpoints. Load only
-trusted checkpoints: the PyTorch checkpoint format uses pickle.
-
 Metrics include macro-AUROC, ACC, macro-F1, balanced accuracy, QWK, Brier, ECE,
 NLL, and per-class AUROC, OVR-ACC, precision, sensitivity, specificity and F1.
-Results depend on data, feature extraction and software/hardware; no performance
-numbers or checkpoints are bundled with this implementation.
+Each prediction row contains the patient identifier, true and predicted classes,
+three class probabilities, and the shared ordinal score.
 
 ## Repository layout
 
 ```text
-configs/       Main hyperparameters and concept prompts
-src/vlr_mil/   Network, losses, data interface, training and fixed-model evaluation
+configs/       Main training hyperparameters
+src/vlr_mil/   Network, losses, clinical preprocessing, data loading and training
 scripts/       One-command five-fold launcher
-tests/         Synthetic unit and end-to-end tests
 ```
 
 ## License
 
-Source code is distributed under the [MIT License](LICENSE). CONCH and any other
-upstream foundation models, pretrained weights, and datasets retain their respective
-licenses and access requirements; none are redistributed here.
+Source code is distributed under the [MIT License](LICENSE). Upstream foundation
+models and datasets are subject to their respective licenses and access requirements.
