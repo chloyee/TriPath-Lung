@@ -13,6 +13,7 @@ from .data import ClinicalTransform, five_folds, load_patient, read_manifest, CO
 from .losses import ordinal_loss, ranking_loss
 from .metrics import fit_cutpoints, metrics, probabilities
 from .model import VLRMIL
+from .selection import prepare_bags
 
 
 def dump(path, value):
@@ -135,6 +136,9 @@ def main():
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--threads', type=int, default=4)
     parser.add_argument('--fold', type=int, choices=range(5))
+    parser.add_argument('--selection-output', type=Path,
+                        help='Build concept-guided bags in a fresh cache directory before training')
+    parser.add_argument('--selection-config', type=Path, default=Path('configs/selection.json'))
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
     config = json.loads(args.config.read_text())
@@ -149,10 +153,16 @@ def main():
         if (args.output/f"seed{config['seed']}_fold{fold}").exists():
             raise FileExistsError('Refusing to overwrite an existing fold; use a fresh output directory')
     args.output.mkdir(parents=True, exist_ok=True)
+    selection = None
+    if args.selection_output is not None:
+        selection = prepare_bags(groups, args.features_root, args.selection_output,
+                                 json.loads(args.selection_config.read_text()))
+        args.features_root = args.selection_output
     dump(args.output/'input_provenance.json', dict(
         manifest_sha256=hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
         concept_embeddings_sha256=hashlib.sha256(args.concept_embeddings.read_bytes()).hexdigest(),
-        config=config, patients=len(groups), folds=folds, torch_version=torch.__version__, numpy_version=np.__version__,
+        config=config, selection=selection, features_root=str(args.features_root.resolve()),
+        patients=len(groups), folds=folds, torch_version=torch.__version__, numpy_version=np.__version__,
         code_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.glob('*.py')}))
     all_rows = []
     for fold in folds:

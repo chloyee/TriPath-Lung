@@ -21,6 +21,7 @@ python -m pip install -e .
 ```
 
 Training consumes cached CONCH patch features and matching concept embeddings.
+The concept-guided selector constructs reproducible slide bags before MIL training.
 
 ## Architecture
 
@@ -72,6 +73,62 @@ p  = [1 − q1, q1 − q2, q2]
 ```
 
 ## Data preparation
+
+### Concept-guided instance selection
+
+For each candidate patch, let `c` denote the eight raw CONCH image–text cosine
+similarities. Concept text prototypes are the normalized mean of normalized
+prompt embeddings. The response-support score is
+
+```text
+support = (c_immune_inflamed + c_tls_like) / 2
+        − (c_immune_excluded + c_immune_desert) / 2
+        + 0.5 * c_viable_tumor − 0.5 * c_artifact.
+```
+
+This is a predefined selection heuristic, not a predicted response probability or
+learned MIL attention. Semantic uncertainty is the entropy of
+`softmax(c / 0.10)` across all eight concepts, not patient-level predictive uncertainty.
+
+Each slide receives a budget `K = min(N, 512)`:
+
+1. Select the `round(0.60 * K)` highest-support patches.
+2. From unselected patches, select the `round(0.20 * K)` highest-entropy patches.
+3. Sample the remaining budget uniformly without replacement from the rest.
+
+At K=512 the quotas are 307 support, 102 uncertain and 103 random patches;
+the final quota absorbs rounding. Ties retain input order. The random seed is
+the first eight SHA256 bytes of the slide ID interpreted as a little-endian
+integer, independent of the training seed. At N≤128 all patches are tagged `all`;
+at 128<N≤512 the quotas still retain all available patches. No patches are duplicated.
+Multiple slides are selected separately. The selector does not use clinical data,
+outcome labels, model predictions or patient-level train/validation membership.
+
+Settings are in [configs/selection.json](configs/selection.json); implementation
+and cache preparation are in [selection.py](src/vlr_mil/selection.py).
+Inputs must contain candidate-level `features`, `concept_scores`, `level0_xy`
+and the ordered `concept_names`. The input `selected` mask is not required for
+this preparation step. The candidate universe is exactly the supplied cache:
+this module does not perform image extraction, tissue QC, or recover omitted patches.
+
+```bash
+python -m vlr_mil.selection \
+  --manifest data/GDPH_internal_slides.csv \
+  --features-root features/conch_candidates \
+  --output features/conch_selected \
+  --config configs/selection.json
+```
+
+The output must be a new directory, separate from the source cache. Array row order
+and all non-selection arrays are preserved; `selected`, `selection_group` and
+`response_support_score` are generated. `selection_manifest.json` records settings,
+candidate/selected counts, source score dtype, and source/output/code hashes.
+Use raw float32 concept scores to reproduce extraction-time selection. Re-selection
+from float16-quantized scores can change rankings near ties; it is not guaranteed
+to reproduce a historical float32 selection mask. Existing validated masks can be
+used directly without re-selection.
+
+### Clinical manifest and feature cache
 
 Supply one CSV row per slide. Multiple slides of a patient must have the same
 clinical fields and outcome. Patient identifiers must be stable across manifests.
@@ -129,6 +186,25 @@ bash scripts/run_fivefold.sh \
   --device cuda:0
 ```
 
+To build bags and train in one command, pass a fresh selection output directory:
+
+```bash
+bash scripts/run_fivefold.sh \
+  --manifest data/GDPH_internal_slides.csv \
+  --features-root features/conch_candidates \
+  --selection-output features/conch_selected_run1 \
+  --selection-config configs/selection.json \
+  --concept-embeddings features/conch_v1/concept_embeddings.npz \
+  --output outputs/main_selected_seed55 \
+  --device cuda:0
+```
+
+Selection runs once before the folds; training then loads the newly generated
+cache. Without `--selection-output`, the existing cached masks are used unchanged.
+Training patch dropout is applied only after selection; validation uses the full
+selected bag. Bag provenance is included in `input_provenance.json` when selection
+is invoked from the training entry point.
+
 Use `--device cpu --threads 4` for CPU execution. Add `--fold 0` to run one fold;
 omit `--fold` for all five folds. To change the seed or training hyperparameters,
 edit a copy of [configs/main.json](configs/main.json) and pass `--config`.
@@ -185,6 +261,11 @@ configs/       Main training hyperparameters
 src/vlr_mil/   Network, losses, clinical preprocessing, data loading and training
 scripts/       One-command five-fold launcher
 ```
+
+## Verification
+
+Selection and cache-to-training checks can be run with
+`python -m unittest discover -s tests -v`.
 
 ## License
 

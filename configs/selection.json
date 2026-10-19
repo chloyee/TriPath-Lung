@@ -1,0 +1,10 @@
+{
+  "min_patches_per_slide": 128,
+  "max_patches_per_slide": 512,
+  "top_fraction": 0.60,
+  "uncertainty_fraction": 0.20,
+  "random_fraction": 0.20,
+  "alpha_tissue": 0.50,
+  "beta_artifact": 0.50,
+  "softmax_temperature": 0.10
+}
