@@ -24,10 +24,17 @@ class ClassSpecificAttention(nn.Module):
         self.attention = nn.Linear(dim, classes, bias=False)
         self.output = nn.Linear(dim * classes, dim)
 
-    def forward(self, inputs):
+    def forward(self, inputs, ablate_channel=None):
         logits = self.attention(self.value(inputs) * self.gate(inputs)).transpose(0, 1)
         weights = logits.softmax(dim=-1)
-        return self.output((weights @ inputs).flatten()), weights
+        pooled = weights @ inputs
+        if ablate_channel is not None:
+            if ablate_channel not in range(len(pooled)):
+                raise ValueError('Invalid attention channel')
+            mask = pooled.new_ones((len(pooled), 1))
+            mask[ablate_channel] = 0
+            pooled = pooled * mask
+        return self.output(pooled.flatten()), weights
 
 
 class FeatureAdapter(nn.Module):
@@ -59,14 +66,14 @@ class SpatialSlideEncoder(nn.Module):
         self.context = nn.TransformerEncoder(layer, num_layers=1)
         self.pool = ClassSpecificAttention(dim)
 
-    def forward(self, features, concepts, coordinates, matched_text, alignment_score):
+    def forward(self, features, concepts, coordinates, matched_text, alignment_score, ablate_channel=None):
         centered = coordinates - coordinates.mean(dim=0, keepdim=True)
         positions = centered / centered.abs().amax(dim=0, keepdim=True).clamp_min(1.)
         image = self.feature_dropout(self.feature(features))
         text = self.feature_dropout(self.matched_text(matched_text))
         gate = self.alignment_gate(torch.cat((image, text, alignment_score.unsqueeze(-1)), dim=-1))
         tokens = gate * image + (1 - gate) * text + self.concepts(concepts) + self.coordinates(positions)
-        return self.pool(self.context(tokens.unsqueeze(0)).squeeze(0))
+        return self.pool(self.context(tokens.unsqueeze(0)).squeeze(0), ablate_channel)
 
 
 class ClinicalEncoder(nn.Module):
@@ -127,7 +134,7 @@ class VLRMIL(nn.Module):
         self.slide_dropout = slide_dropout
         self.register_buffer('concept_embeddings', concept_embeddings.float())
 
-    def encode_slide(self, slide):
+    def encode_slide(self, slide, ablate_patch_channel=None):
         embeddings, attentions = [], []
         for start in range(0, len(slide['features']), self.chunk_size):
             stop = start + self.chunk_size
@@ -136,20 +143,20 @@ class VLRMIL(nn.Module):
             embedding, attention = self.slide_encoder(
                 self.feature_adapter(slide['features'][start:stop]), concepts,
                 slide['coordinates'][start:stop], self.concept_embeddings[raw.argmax(dim=-1)],
-                concepts.amax(dim=-1))
+                concepts.amax(dim=-1), ablate_patch_channel)
             embeddings.append(embedding)
             attentions.append(attention)
         embedding = embeddings[0] if len(embeddings) == 1 else self.chunk_pool(torch.stack(embeddings))[0]
         return embedding, attentions
 
-    def forward(self, slides, clinical_categorical, clinical_age, clinical_missing):
+    def forward(self, slides, clinical_categorical, clinical_age, clinical_missing, ablate_patch_channel=None):
         clinical = self.clinical_encoder(clinical_categorical, clinical_age, clinical_missing)
         if self.training and len(slides) > 1 and self.slide_dropout > 0:
             keep = torch.rand(len(slides), device=slides[0]['features'].device) >= self.slide_dropout
             if not keep.any():
                 keep[torch.randint(len(slides), (1,), device=keep.device)] = True
             slides = [s for i, s in enumerate(slides) if bool(keep[i])]
-        encoded = [self.encode_slide(s) for s in slides]
+        encoded = [self.encode_slide(s, ablate_patch_channel) for s in slides]
         image, slide_attention = self.slide_pool(torch.stack([x[0] for x in encoded]))
         clinical_scale = self.clinical_scale_logit.sigmoid()
         interaction_scale = self.interaction_scale_logit.sigmoid()
@@ -162,4 +169,25 @@ class VLRMIL(nn.Module):
                       image_gate=1-clinical_scale, clinical_gate=clinical_scale,
                       patch_attention=[x[1] for x in encoded], slide_attention=slide_attention,
                       patient_embedding=image + clinical_scale * clinical)
+        return result
+
+    def forward_with_channel_ablation(self, slides, *clinical):
+        """Same head, same stochastic masks; zero one PATCH-pool vector per pass.
+
+        Channel indices refer only to the patch pool, not chunk/slide pooling.
+        The outer RNG advances by one ordinary forward, even during training.
+        """
+        device = slides[0]['features'].device
+        devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == 'cuda' else []
+        cpu_state = torch.get_rng_state()
+        cuda_states = [torch.cuda.get_rng_state(d) for d in devices]
+        result = self(slides, *clinical)
+        ablated = []
+        for channel in range(3):
+            with torch.random.fork_rng(devices=devices):
+                torch.set_rng_state(cpu_state)
+                for d, state in zip(devices, cuda_states):
+                    torch.cuda.set_rng_state(state, d)
+                ablated.append(self(slides, *clinical, ablate_patch_channel=channel)['probabilities'])
+        result['channel_ablated_probabilities'] = torch.stack(ablated)
         return result

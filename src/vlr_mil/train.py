@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from .data import ClinicalTransform, five_folds, load_patient, read_manifest, CONCEPTS
-from .losses import ordinal_loss, ranking_loss
+from .losses import ordinal_loss, ranking_loss, channel_binding_loss
 from .metrics import fit_cutpoints, metrics, probabilities
 from .model import VLRMIL
 from .selection import prepare_bags
@@ -70,6 +70,10 @@ def train_fold(args, config, groups, split, fold, embeddings):
     threshold_weights = torch.tensor([(y < 1).sum()/(y >= 1).sum(), (y < 2).sum()/(y >= 2).sum()], dtype=torch.float32, device=device)
     dump(dest/'split.json', split); dump(dest/'config.json', config)
     best, stale = float('inf'), 0
+    binding_weight = float(config.get('channel_binding_weight', 0.))
+    warmup = int(config.get('channel_binding_warmup_epochs', 5))
+    if binding_weight < 0 or warmup < 0:
+        raise ValueError('Binding weight and warmup must be nonnegative')
     for epoch in range(1, config['epochs']+1):
         model.train(); order = list(train_ids)
         mpr_ids = [pid for pid in train_ids if int(groups[pid][0]['label']) == 1]
@@ -77,12 +81,25 @@ def train_fold(args, config, groups, split, fold, embeddings):
         order.extend(mpr_ids[i % len(mpr_ids)] for i in range(extra))
         random.shuffle(order)
         memory, total = [], 0.
+        binding_total = 0.
+        binding_active = binding_weight > 0 and epoch > warmup
+        delta_sum = np.zeros((3, 3)); delta_count = np.zeros(3, dtype=int)
         for pid in order:
             r = groups[pid]
             slides = load_patient(r, args.features_root, device, training=True, patch_dropout=config['patch_dropout'])
-            output = model(slides, *transform(r[0], device))
+            forward = model.forward_with_channel_ablation if binding_active else model
+            output = forward(slides, *transform(r[0], device))
             label = torch.tensor(int(r[0]['label']), device=device)
             loss = ordinal_loss(output, label, class_weights, threshold_weights)
+            if binding_active:
+                auxiliary = channel_binding_loss(output, label,
+                    config.get('channel_binding_support_margin', .01),
+                    config.get('channel_binding_specificity_margin', .01))
+                loss = loss + binding_weight * auxiliary
+                binding_total += float(auxiliary.detach())
+                delta_sum[int(label)] += (output['probabilities'][int(label)] -
+                    output['channel_ablated_probabilities'][:, int(label)]).detach().cpu().numpy()
+                delta_count[int(label)] += 1
             pair = ranking_loss(output['risk_score'], int(label), memory, config['pairwise_max_pairs'], config['pairwise_mpr_factor'])
             if pair is not None:
                 loss = loss + config['pairwise_ranking_weight']*pair
@@ -99,6 +116,9 @@ def train_fold(args, config, groups, split, fold, embeddings):
         valid_loss /= len(valid_ids)
         predictions = predict(model, transform, groups, valid_ids, args.features_root, device)
         record = dict(epoch=epoch, train_loss=total/len(order), validation_loss=valid_loss, validation=summarize(predictions))
+        record.update(channel_binding_active=binding_active, channel_binding_loss=binding_total/len(order),
+                      channel_binding_delta_by_true_label=[(delta_sum[k]/delta_count[k]).tolist()
+                          if delta_count[k] else None for k in range(3)])
         with (dest/'history.jsonl').open('a', encoding='utf-8') as f:
             f.write(json.dumps(record)+'\n')
         print(json.dumps(dict(fold=fold, **record)), flush=True)

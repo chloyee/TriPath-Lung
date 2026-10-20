@@ -4,6 +4,22 @@ import torch
 from torch.nn import functional as F
 
 
+def channel_binding_loss(output, label, support_margin=.01, specificity_margin=.01):
+    """Bind patch-pool k to outcome k via same-head ablation probabilities.
+
+    Gradients flow through both complete and ablated predictions. This is a
+    functional dependence constraint, not a guarantee of spatial specificity.
+    """
+    if support_margin < 0 or specificity_margin < 0:
+        raise ValueError('Binding margins must be nonnegative')
+    y = int(label)
+    delta = output['probabilities'][y] - output['channel_ablated_probabilities'][:, y]
+    other = torch.arange(3, device=delta.device) != y
+    support = F.relu(support_margin - delta[y])
+    specificity = F.relu(specificity_margin + delta[other] - delta[y]).mean()
+    return support + specificity
+
+
 def ordinal_loss(output, label, class_weights, threshold_positive_weights):
     target = F.one_hot(label.long(), 3).float()
     ordinal = output['risk_score'].new_zeros(())

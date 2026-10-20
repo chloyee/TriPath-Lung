@@ -13,5 +13,9 @@
   "pairwise_max_pairs": 64,
   "pairwise_mpr_factor": 4.0,
   "mpr_oversample_factor": 2.0,
-  "calibrate_cumulative": true
+  "calibrate_cumulative": true,
+  "channel_binding_weight": 0.05,
+  "channel_binding_warmup_epochs": 5,
+  "channel_binding_support_margin": 0.01,
+  "channel_binding_specificity_margin": 0.01
 }

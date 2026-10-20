@@ -54,8 +54,10 @@ source-order ranks rather than averaged ranks. Spatial coordinates are centered 
 scaled per bag. A one-layer, four-head Transformer supplies spatial context.
 
 Three gated attention channels pool patches and slides; each channel is normalized
-over its instances. Their concatenation is projected before ordinal prediction, so
-the channels are not independently supervised class probabilities. With the 512-patch
+over its instances. Their concatenation is projected before ordinal prediction.
+Patch channels 0/1/2 are encouraged to support Non-MPR/MPR-only/pCR through a
+same-head channel-ablation auxiliary loss. They are not independent classifiers
+or probabilities. Chunk and slide channels have no class-binding constraint. With the 512-patch
 budget, each slide has one chunk; a retained chunk pool supports the model interface.
 
 Clinical fusion is image-dominant:
@@ -229,12 +231,26 @@ nested cross-validation.
 | Ranking loss weight / maximum pairs | 0.05 / 64 |
 | MPR pair sampling factor | 4× when subsampling more than 64 candidate pairs |
 | Gradient clipping | Norm 5 |
+| Patch-channel binding weight | 0.05 |
+| Binding warmup | 5 epochs; active from epoch 6 |
+| Support / specificity margins | 0.01 / 0.01 probability units |
 
 The loss combines positive-weighted cumulative binary losses, 0.5× class-weighted
 categorical NLL, and 0.05× pairwise softplus ranking. All class weights are estimated
 from the training fold. Ranking compares the current patient against detached scores
 from earlier training patients in the same epoch; same-label pairs are excluded.
 MPR pair enrichment applies during pair subsampling, not as an unconditional 4× loss multiplier.
+
+After warmup, a patch-channel binding term is added. For true outcome y, let
+`D[k,y] = p[y] - p_without_patch_channel_k[y]`. The auxiliary loss is
+`relu(0.01 - D[y,y]) + mean(k != y, relu(0.01 + D[k,y] - D[y,y]))`, weighted by 0.05.
+Each ablation zeros one patch-pool summary before its projection; all passes reuse
+the same ordinal head and matched stochastic masks. This encourages the matching
+channel to support the true outcome more strongly than other channels. MPR-only
+is supervised through its interval probability, not an increasing risk-score target.
+Active training uses four forward graphs; ordinary inference uses one pass.
+Set `channel_binding_weight` to zero in a copied config for the unbound baseline.
+See [channel binding](docs/channel_binding.md) for the definition and limitations.
 
 After checkpoint selection, optional cutpoint calibration uses **training-fold** scores
 and labels only, maximizing macro-F1, then balanced accuracy, MPR recall and QWK.
@@ -248,6 +264,10 @@ Each fold stores `best.pt`, `split.json`, `config.json`, `history.jsonl`,
 `validation_predictions.csv` and `metrics.json`. Running all five folds also produces
 one prediction per internal patient in `oof_predictions.csv` and pooled OOF metrics.
 Input hashes and code hashes are recorded in `input_provenance.json`.
+Training history also records the unweighted binding loss and mean probability
+drops by true label and ablated channel. Validation loss and early stopping remain
+based on the original ordinal objective. Best-checkpoint selection is not forced
+to occur after warmup; inspect its saved epoch before interpreting channel binding.
 
 Metrics include macro-AUROC, ACC, macro-F1, balanced accuracy, QWK, Brier, ECE,
 NLL, and per-class AUROC, OVR-ACC, precision, sensitivity, specificity and F1.
@@ -263,6 +283,11 @@ scripts/       One-command five-fold launcher
 ```
 
 ## Verification
+
+The [outcome-directed patch-channel auxiliary loss](docs/channel_binding.md)
+reuses the ordinal head without adding a classifier and is enabled in the default
+training configuration. This constraint requires training; historical checkpoints
+have not learned it and must not be retrospectively labeled as class-bound models.
 
 Selection and cache-to-training checks can be run with
 `python -m unittest discover -s tests -v`.
