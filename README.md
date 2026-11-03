@@ -2,11 +2,11 @@
 
 TriPath-Lung integrates semantically selected regions from pretreatment H&E biopsies with clinical information to predict three ordered pathological response states: **non-MPR, MPR without pCR (MPR-only), and pCR**. Frozen CONCH features guide tissue selection, hierarchical attention combines regions and slides, and a shared ordinal head integrates tissue and clinical evidence.
 
-This repository implements the manuscript's main-model training logic for user-provided datasets and patient allocations. The workflow starts from cached CONCH features: semantic bag selection, patient-level data loading, multimodal ordinal modeling, internal validation, checkpoint export, and held-out testing.
+PyTorch implementation of TriPath-Lung with semantic patch selection, multimodal training and patient-level evaluation.
 
-## Environment
+## Installation
 
-The manuscript reports Python 3.11.4, PyTorch 2.4.0, torchvision 0.19.0 and CUDA 12.1 on two NVIDIA RTX 4090 GPUs. Cached-feature training requires NumPy, scikit-learn and PyTorch; torchvision and CONCH are used upstream when preparing image features.
+Requirements: Python 3.11+, PyTorch 2.4.0, NumPy 1.26.4 and scikit-learn 1.3.0. Training and testing run on CPU or a CUDA device. Feature extraction uses [CONCH](https://github.com/mahmoodlab/CONCH), installed separately.
 
 ```bash
 python3.11 -m venv .venv
@@ -24,23 +24,23 @@ python -m pip install -e .
 
 The trainer processes one patient per optimization step on the selected device. Use `--device cpu` for CPU execution or `--device cuda:0` for a CUDA device.
 
-## Prepare the training inputs
+## Data preparation
 
-Provide these three resources:
+Training requires:
 
-1. A deidentified slide manifest for your development cohort.
-2. Your patient-level training and validation allocation.
-3. Cached frozen CONCH visual features, raw concept similarities, patch coordinates and the matching text prototype bank.
+1. A slide manifest containing patient IDs, response labels and clinical variables.
+2. A JSON file listing training and validation patient IDs.
+3. Frozen CONCH visual features, concept similarities, patch coordinates and text prototypes.
 
 [Data preparation](docs/data_preparation.md) defines the file formats, clinical encoding and upstream image-processing requirements. [Training settings](docs/training_settings.md) records the architecture and optimization settings.
 
 ### Patient allocation
 
-The split JSON has two keys, `train` and `validation`, each containing an array of patient ID strings matching the manifest. Choose the allocation and proportions for your cohort. All slides of each patient follow that patient's allocation. The trainer checks unique IDs, disjoint partitions, complete manifest coverage and representation of all three outcomes in each partition before fitting clinical preprocessing.
+The split JSON has two keys, `train` and `validation`, each containing an array of patient ID strings matching the manifest. All slides of each patient follow that patient's allocation. The trainer checks unique IDs, disjoint partitions, complete manifest coverage and representation of all three outcomes in each partition before fitting clinical preprocessing.
 
-The default configuration accepts user-defined center names and cohort sizes. `internal_center` optionally restricts the manifest to one center; `expected_class_counts` optionally checks a user-specified allocation. Both default to `null`. Study patient data and allocations remain private; users prepare inputs from their own datasets.
+`internal_center` optionally restricts the manifest to one center; `expected_class_counts` optionally validates the class counts in each partition. Both default to `null`. Center identifiers and partition sizes are read from the manifest and split file.
 
-CONCH is obtained from its [official repository](https://github.com/mahmoodlab/CONCH). Users define the text descriptions for the eight tissue concepts and generate the matching prototype bank and concept-score caches, following [Data preparation](docs/data_preparation.md).
+Text descriptions define eight tissue concepts. Encode these descriptions with CONCH to build the text prototypes and calculate patch–concept similarities. [Data preparation](docs/data_preparation.md) specifies the concept order and cache format.
 
 ### Semantic patch selection
 
@@ -64,7 +64,7 @@ python -m vlr_mil.selection \
 
 The output directory is created for this selection run. Original array order is preserved; the selector adds `selected`, `selection_group` and `response_support_score`. `selection_manifest.json` records counts, settings and file hashes. Raw float32 scores preserve extraction-time ranking precision. An existing verified selection mask can be supplied directly to training.
 
-## Train the main model
+## Training
 
 ```bash
 bash scripts/run_train.sh \
@@ -80,7 +80,7 @@ To run selection and training together, use the candidate cache for `--features-
 
 Clinical preprocessing is fitted on training patients. Internal-validation loss selects the checkpoint. The main configuration uses AdamW with learning rate `5e-5`, weight decay `1e-3`, gradient-norm clipping at `5`, up to `60` epochs and patience `8` with minimum loss improvement `0.001`.
 
-## Test the trained model
+## Evaluation
 
 Prepare a labeled test manifest and selected feature caches using the same CONCH encoder and text prototypes as training. Assign stable patient identifiers across manifests so the test cohort is separate from both training and model-selection patients.
 
@@ -140,10 +140,8 @@ python -m unittest discover -s tests -v
 python scripts/check_secrets.py
 ```
 
-Tests cover semantic selection, patient separation, training-only clinical preprocessing, the manuscript loss formula, raw-score gating, matched stochastic masks, auxiliary gradients, a six-epoch synthetic training run, held-out test execution, development/test separation and checkpoint-to-prediction consistency. The synthetic run validates the training workflow on a user-defined cohort and allocation.
+Tests cover semantic selection, patient separation, training-only clinical preprocessing, the ordinal loss formula, raw-score gating, matched stochastic masks, auxiliary gradients, a six-epoch synthetic training run, held-out test execution, development/test separation and checkpoint-to-prediction consistency.
 
-## Publication and license
+## License
 
-Associated manuscript: *TriPath-Lung: semantically guided and interpretable prediction of pathological response to neoadjuvant immunotherapy*.
-
-Source code is distributed under the [MIT License](LICENSE). Foundation-model weights and clinical data follow their respective access and licensing terms. Training runs locally from cached features; repository configuration contains no service credentials.
+Source code is distributed under the [MIT License](LICENSE). Foundation-model weights and clinical data follow their respective access and licensing terms.
