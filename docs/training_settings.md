@@ -5,7 +5,7 @@ The main entry point implements the patient-level development protocol in Supple
 | Setting | Main configuration | Basis |
 |---|---|---|
 | Outcome order | non-MPR, MPR-only, pCR | Manuscript |
-| Development split | 316 train / 80 internal validation | Manuscript |
+| Development split | User-provided patient-level train / validation allocation | User dataset |
 | Frozen CONCH visual features | 512 dimensions | Manuscript |
 | Patch budget | 512 per slide; 60/20/20 selection | Manuscript |
 | Matching temperature | 0.10 | Manuscript |
@@ -39,8 +39,8 @@ The main entry point implements the patient-level development protocol in Supple
 | Main-model feature input | Direct projection of frozen features | Supplementary equations (5)–(6) |
 | Prediction cutpoints | Learned jointly with the model | Supplementary equation (10) |
 
-Class and threshold weights are computed from the original training patients before oversampling. Ranking excludes same-label pairs and increases the selection probability of pairs involving MPR-only when sampling more than 64 candidate pairs. All four channel-binding passes preserve paired dropout masks.
+Class and threshold weights are computed from the training patients before oversampling. Ranking excludes same-label pairs and increases the selection probability of pairs involving MPR-only when sampling more than 64 candidate pairs. All four channel-binding passes preserve paired dropout masks.
 
 The source implementation retains optional residual feature-adapter parameters for code compatibility. `use_feature_adapter` is false in the main configuration. `calibrate_cumulative` is false; the manuscript entry point uses the jointly learned cutpoints throughout checkpoint selection and prediction.
 
-The split file identifies the original patients; the seed governs training randomness within that allocation. Best-checkpoint selection uses a loss decrease greater than the configured minimum. Record the checkpoint epoch alongside the exported predictions.
+The split file identifies the user-selected training and validation patients; the seed governs training randomness within that allocation. Cohort size, center names and text descriptions are supplied by the user. The eight concept definitions, model architecture, selection rule and training objective follow the manuscript. Best-checkpoint selection uses a loss decrease greater than the configured minimum. Record the checkpoint epoch alongside the exported predictions.

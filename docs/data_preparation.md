@@ -4,7 +4,7 @@ Training uses frozen CONCH feature caches and a patient-level clinical manifest.
 
 ## CONCH and tissue concepts
 
-Use the same CONCH version for image features and text prototypes. Save the 512-dimensional visual features used for image analysis. Compute raw cosine similarities using normalized projected image embeddings and normalized text prototypes. Each prototype averages the synonymous descriptions for its concept and is normalized after averaging.
+Obtain CONCH code and weights through the [official CONCH repository](https://github.com/mahmoodlab/CONCH) and its installation instructions. CONCH runs as an external feature extractor. Use the same CONCH version for image features and text prototypes. Save the 512-dimensional visual features used for image analysis. Compute raw cosine similarities using normalized projected image embeddings and normalized text prototypes. Each prototype averages the synonymous descriptions for its concept and is normalized after averaging.
 
 The canonical concept order is:
 
@@ -13,7 +13,7 @@ viable_tumor, artifact, immune_inflamed, tls_like,
 immune_excluded, immune_desert, necrosis, fibrotic_stroma
 ```
 
-Retain the exact text descriptions and encoder preprocessing settings used to produce the cache. The TLS-like concept describes lymphoid morphology; tissue annotation establishes TLS maturation and function.
+Users specify one or more text descriptions for each of these eight concepts. Keep the concept meanings and order above, and use the resulting prototype bank consistently for patch scores and model input. When changing prompts, regenerate both the text prototypes and concept scores, then rerun semantic selection. Retain the text descriptions and encoder preprocessing settings with the cache. The TLS-like concept describes lymphoid morphology; tissue annotation establishes TLS maturation and function.
 
 ## Slide manifest
 
@@ -22,7 +22,7 @@ Provide one CSV row per slide. A patient's rows share the same clinical variable
 | Field | Encoding |
 |---|---|
 | `patient_id`, `slide_id` | Stable deidentified identifiers |
-| `center` | `GDPH` for development |
+| `center` | User-defined center identifier, also used as the feature subdirectory |
 | `label` | `0` non-MPR; `1` MPR-only; `2` pCR |
 | `pathology_type` | `LUAD`, `LUSC`, `Other`; blank for missing |
 | `T_stage` | Pretreatment `T0`–`T4`; substages such as `T2a` map to `T2` |
@@ -50,7 +50,16 @@ Candidate caches supply the first four arrays. The selector generates `selected`
 
 ## Allocation file
 
-The split JSON contains `train` and `validation`, each holding patient ID strings. Together the lists cover the eligible development manifest exactly once. Use the original study allocation. The manuscript configuration checks both total counts and class counts. For another cohort, set `expected_class_counts` in a separate configuration to that cohort's allocation.
+The split JSON contains `train` and `validation`, each holding patient ID strings. Choose the split method and proportions for your dataset. Together the lists cover the eligible development manifest exactly once, with each patient assigned to one partition and all three outcomes represented in each partition. For example:
+
+```json
+{
+  "train": ["patient_a", "patient_b", "patient_c"],
+  "validation": ["patient_d", "patient_e", "patient_f"]
+}
+```
+
+The default configuration accepts your cohort size and center identifiers. Optional `expected_class_counts` can record your counts as `{"train": [n0, n1, n2], "validation": [m0, m1, m2]}`. Optional `internal_center` restricts the manifest to the supplied center name. Both options default to `null`.
 
 ## Resources accompanying a training run
 
