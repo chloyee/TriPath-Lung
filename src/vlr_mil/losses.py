@@ -7,8 +7,7 @@ from torch.nn import functional as F
 def channel_binding_loss(output, label, support_margin=.01, specificity_margin=.01):
     """Bind patch-pool k to outcome k via same-head ablation probabilities.
 
-    Gradients flow through both complete and ablated predictions. This is a
-    functional dependence constraint, not a guarantee of spatial specificity.
+    Gradients flow through both complete and ablated predictions.
     """
     if support_margin < 0 or specificity_margin < 0:
         raise ValueError('Binding margins must be nonnegative')
@@ -29,6 +28,7 @@ def ordinal_loss(output, label, class_weights, threshold_positive_weights):
     # sum preserves the patient's class weight with one patient per step.
     nll = F.nll_loss(output['probabilities'].clamp_min(1e-8).log().reshape(1, 3),
                      label.reshape(1), weight=class_weights, reduction='sum')
+    # Equation (11) sums the two thresholds, then averages over patients.
     return ordinal + .5 * nll
 
 

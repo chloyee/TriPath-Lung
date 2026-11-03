@@ -1,10 +1,9 @@
-"""Manifest validation, fold-local clinical encoding, and immutable cached bags."""
+"""Patient-level split validation, training-set clinical encoding and cached bags."""
 import csv
 from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.model_selection import StratifiedKFold
 
 CONCEPTS = ['viable_tumor', 'artifact', 'immune_inflamed', 'tls_like',
             'immune_excluded', 'immune_desert', 'necrosis', 'fibrotic_stroma']
@@ -46,13 +45,28 @@ def read_manifest(path, internal_center=None):
     return groups
 
 
-def five_folds(groups, seed):
-    ids = np.array(sorted(groups))
-    y = np.array([int(groups[p][0]['label']) for p in ids])
-    if np.bincount(y, minlength=3).min() < 5:
-        raise ValueError('Each class needs at least five patients for stratified five-fold CV')
-    return [dict(train=ids[tr].tolist(), validation=ids[va].tolist())
-            for tr, va in StratifiedKFold(5, shuffle=True, random_state=seed).split(ids, y)]
+def validate_split(groups, split, expected_class_counts=None):
+    """Validate an explicit patient allocation before fitting any preprocessing."""
+    if set(split) != {'train', 'validation'}:
+        raise ValueError('Split JSON must contain exactly train and validation patient lists')
+    for name, ids in split.items():
+        if not isinstance(ids, list) or not ids or not all(isinstance(p, str) for p in ids):
+            raise ValueError(f'{name} must be a nonempty list of patient ID strings')
+        if len(ids) != len(set(ids)):
+            raise ValueError(f'Duplicate patient IDs in {name}')
+    if set(split['train']) & set(split['validation']):
+        raise ValueError('A patient cannot occur in both training and validation')
+    if set(split['train']) | set(split['validation']) != set(groups):
+        raise ValueError('Split must cover exactly the eligible manifest patients')
+    for name, ids in split.items():
+        counts = np.bincount([int(groups[p][0]['label']) for p in ids], minlength=3)
+        if counts.min() == 0:
+            raise ValueError(f'{name} must contain all three outcomes')
+        if expected_class_counts is not None:
+            expected = expected_class_counts.get(name)
+            if expected is None or counts.tolist() != expected:
+                raise ValueError(f'{name} class counts {counts.tolist()} differ from configured {expected}')
+    return split
 
 
 def stage(value):
@@ -69,7 +83,7 @@ class ClinicalTransform:
             return
         ages = [float(r['age']) for r in rows if r['age']]
         if not ages:
-            raise ValueError('No observed ages in the training fold')
+            raise ValueError('No observed ages in the training set')
         tps = [np.log1p(100*float(r['pdl1_tps'])) for r in rows if r['pdl1_tps']]
         self.state = dict(age_mean=float(np.mean(ages)), age_std=float(np.std(ages)) or 1.,
                           pdl1_mean=float(np.mean(tps)) if tps else 0.,

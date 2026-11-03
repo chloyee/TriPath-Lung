@@ -1,4 +1,4 @@
-"""Main VLR-MIL architecture operating on frozen patch and concept features."""
+"""TriPath-Lung architecture operating on frozen patch and concept features."""
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -108,14 +108,16 @@ class CumulativeLinkHead(nn.Module):
 
 
 class VLRMIL(nn.Module):
-    """Full adapter + concept-percentile + residual-clinical cumulative model."""
+    """Hierarchical multimodal MIL with a shared ordinal response head."""
     def __init__(self, concept_embeddings, feature_dim=512, concept_dim=8, dim=128,
-                 adapter_dim=64, adapter_dropout=.1, slide_dropout=.15, chunk_size=512):
+                 adapter_dim=64, adapter_dropout=.1, slide_dropout=.15, chunk_size=512,
+                 use_feature_adapter=False):
         super().__init__()
         if tuple(concept_embeddings.shape) != (concept_dim, feature_dim):
             raise ValueError('Concept embeddings must have shape (8, feature_dim)')
         self.chunk_size = chunk_size
-        self.feature_adapter = FeatureAdapter(feature_dim, adapter_dim, adapter_dropout)
+        self.feature_adapter = (FeatureAdapter(feature_dim, adapter_dim, adapter_dropout)
+                                if use_feature_adapter else nn.Identity())
         self.slide_encoder = SpatialSlideEncoder(feature_dim, concept_dim, dim)
         self.chunk_pool = ClassSpecificAttention(dim)
         self.slide_pool = ClassSpecificAttention(dim)
@@ -143,7 +145,7 @@ class VLRMIL(nn.Module):
             embedding, attention = self.slide_encoder(
                 self.feature_adapter(slide['features'][start:stop]), concepts,
                 slide['coordinates'][start:stop], self.concept_embeddings[raw.argmax(dim=-1)],
-                concepts.amax(dim=-1), ablate_patch_channel)
+                raw.amax(dim=-1), ablate_patch_channel)
             embeddings.append(embedding)
             attentions.append(attention)
         embedding = embeddings[0] if len(embeddings) == 1 else self.chunk_pool(torch.stack(embeddings))[0]
