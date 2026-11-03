@@ -61,6 +61,10 @@ The split JSON contains `train` and `validation`, each holding patient ID string
 
 The default configuration accepts your cohort size and center identifiers. Optional `expected_class_counts` can record your counts as `{"train": [n0, n1, n2], "validation": [m0, m1, m2]}`. Optional `internal_center` restricts the manifest to the supplied center name. Both options default to `null`.
 
+## Test inputs
+
+Use the same manifest schema for the held-out test cohort, including the three-class response labels for metric calculation. Prepare test bags with the same encoder, text prototypes and selection settings as training. Patient identifiers remain stable across development and test manifests. The test entry point checks that test patients are separate from the checkpoint's training and validation patients and restores clinical normalization from that checkpoint.
+
 ## Resources accompanying a training run
 
 Keep the deidentified allocation, manifest, feature caches, prototype bank and extraction record together. Source-model weights are obtained under CONCH's access terms. The cached-feature trainer operates without an API service. Store any upstream download credentials in the user's environment, separately from source files and experiment artifacts.
