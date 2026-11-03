@@ -125,6 +125,33 @@ class ManuscriptTests(unittest.TestCase):
                 self.assertTrue(all(0 <= x <= 1 for x in p))
                 for key in ['prob_non_mpr', 'prob_mpr_only', 'prob_pcr']:
                     self.assertAlmostEqual(float(first[key]), second[key], places=6)
+            # Exercise the standalone test CLI on a synthetic held-out manifest.
+            test_rows = [dict(r, patient_id='heldout_'+r['patient_id']) for r in rows
+                         if r['patient_id'] in split['validation']]
+            test_manifest = root/'test.csv'
+            with test_manifest.open('w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=list(test_rows[0]))
+                writer.writeheader(); writer.writerows(test_rows)
+            test_command = [sys.executable, '-m', 'vlr_mil.evaluate',
+                '--checkpoint', str(dest/'best.pt'), '--manifest', str(test_manifest),
+                '--features-root', str(root/'selected'), '--output', str(root/'test_run'),
+                '--threads', '2']
+            evaluated = subprocess.run(test_command, cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(evaluated.returncode, 0, evaluated.stdout + evaluated.stderr)
+            with (root/'test_run/test_predictions.csv').open() as f:
+                test_predictions = list(csv.DictReader(f))
+            for first, second in zip(saved, test_predictions):
+                self.assertEqual(second['patient_id'], 'heldout_'+first['patient_id'])
+                for key in ['prob_non_mpr', 'prob_mpr_only', 'prob_pcr']:
+                    self.assertAlmostEqual(float(first[key]), float(second[key]), places=6)
+            self.assertEqual(json.loads((root/'test_run/test_provenance.json').read_text())['clinical'],
+                             checkpoint['clinical'])
+            self.assertTrue((root/'test_run/metrics.json').is_file())
+            # Reusing development patients for held-out testing is rejected.
+            test_command[test_command.index('--manifest')+1] = str(manifest)
+            rejected = subprocess.run(test_command, cwd=ROOT, capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('Test patients must be separate', rejected.stderr)
             # A second invocation must not overwrite the completed experiment.
             repeat = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(repeat.returncode, 0)
