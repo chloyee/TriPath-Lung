@@ -149,7 +149,7 @@ def main():
     parser.add_argument('--config', type=Path, default=Path('configs/main.json'))
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--split', type=Path, required=True,
-                        help='JSON with the original train and validation patient ID lists')
+                        help='JSON with user-selected train and validation patient ID lists')
     parser.add_argument('--features-root', type=Path, required=True)
     parser.add_argument('--concept-embeddings', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
