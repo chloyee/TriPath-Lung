@@ -1,73 +1,26 @@
-# Outcome-directed patch attention without an additional classifier
+# Outcome-directed patch attention
 
-The default training configuration encourages patch-pooling channel 0/1/2 to support
-Non-MPR/MPR-only/pCR through a functional dependence loss. It adds no parameters and
-reuses the existing ordinal head. Setting `channel_binding_weight` to zero disables
-this term; older configurations without the key retain their original behavior.
+TriPath-Lung directs patch-pooling channels 0, 1 and 2 toward non-MPR, MPR-only and pCR through their effect on the shared ordinal prediction. The auxiliary objective reuses the model's prediction head and adds no classifier parameters.
 
-For every patient with true label y, compute complete probabilities p and three
-counterfactual probabilities p(-k). In pass k, zero the kth patch-pool summary vector
-after attention-weighted aggregation and before concatenation/projection, in every
-chunk of every retained slide. The other vectors, projection bias, and clinical
-input remain unchanged. Chunk/slide pooling channels are NOT assigned class labels.
-
-Define D[k,y] = p[y] - p(-k)[y]. Then
+For a patient with label `y`, compute complete probabilities `p` and three channel-ablated predictions `p(-k)`. Each ablation sets the weighted patch summary for channel `k` to zero before concatenation and projection in every slide. The remaining network recomputes the three response probabilities.
 
 ```text
-L_bind = relu(m_support - D[y,y])
-       + mean_{k != y} relu(m_specificity + D[k,y] - D[y,y])
-L_total = L_original + lambda * L_bind
+D[k,y] = p[y] - p(-k)[y]
+L_bind = relu(0.01 - D[y,y])
+       + mean_{k != y} relu(0.01 + D[k,y] - D[y,y])
+L = L_ord + 0.5 * L_cls + 0.05 * L_rank + lambda_bind * L_bind
 ```
 
-The first term encourages the matching channel to support the true outcome. The
-second encourages its removal to reduce the true-class probability more than removal
-of another channel. Gradients flow through both complete and ablated predictions.
-MPR uses P(MPR-only), not a monotonically increasing risk-score target. No validation
-or external labels are used for this training term.
+The support term encourages the outcome-matched channel to increase the observed-class probability. The specificity term encourages a larger probability change for that channel than for either other channel. MPR-only supervision uses its interval probability between the two cumulative thresholds.
 
-For example, P(MPR)=.50 and probabilities after removing channels 0/1/2 of
-[.49,.40,.49] give D=[.01,.10,.01], satisfying both .01 margins. Removing channel 1
-has the strongest effect on MPR probability. This is a mathematical illustration,
-not a patient result.
+## Training schedule
 
-All four passes replay the same CPU/CUDA RNG states so that clinical, slide,
-Transformer and feature dropout masks are matched. The outer RNG advances as for
-one ordinary forward. Patch dropout is sampled once by the data loader before the
-four passes. Auxiliary gradients are not detached. This straightforward implementation
-requires four forward graphs during active training and can substantially increase
-runtime/memory. Ordinary inference still uses one forward pass.
+`configs/main.json` sets `lambda_bind = 0` for epochs 1–5 and `0.05` from epoch 6. The two margins are `0.01` probability units. Complete and ablated passes share the selected patches and replay the same CPU/CUDA random states, matching feature, Transformer, clinical and slide dropout. Patch dropout is sampled once by the loader. Gradients propagate through all four predictions. Standard inference uses one complete forward pass.
 
-## Experiment
+The full training command is in the [README](../README.md). Internal validation uses the complete model and monitors the weighted ordinal and class losses. Checkpoint metadata records the selected epoch.
 
-`configs/main.json` sets lambda=.05, both margins=.01 probability units,
-and five warmup epochs (auxiliary loss starts in epoch 6). These are pilot values,
-not validated best hyperparameters. Standard five-fold training enables this schedule.
+## Reading the outputs
 
-```bash
-bash scripts/run_fivefold.sh --config configs/main.json \
-  --manifest data/GDPH_internal_slides.csv \
-  --features-root features/conch_v1 \
-  --concept-embeddings features/conch_v1/concept_embeddings.npz \
-  --output outputs/channel_binding_seed55_fold0 --fold 0 --device cpu
-```
+`history.jsonl` records the binding loss and a 3 × 3 mean probability-drop matrix: rows are observed outcomes and columns are ablated patch channels. These are training diagnostics with the configured sampling and dropout. Patch attention describes relative pooling within each channel; channel ablation measures dependence of the shared prediction on a pooled representation. Patient-level slide aggregation channels are jointly optimized.
 
-Training history includes the unweighted binding loss and a 3x3 mean delta matrix:
-rows are true outcomes, columns are ablated patch channels. These training summaries
-include patient resampling and dropout; they are not independent validation estimates.
-Validation and early stopping retain the original ordinal loss, without auxiliary
-loss or ablation. Learned ordinal cutpoints are used in this auxiliary term; optional
-post-training cutpoint calibration is a separate step.
-
-## Interpretation limits
-
-This loss encourages class-linked functional reliance, not a guarantee of correct
-localization. The network may exploit feature scale or compensate in downstream
-weights. It does not guarantee diverse maps, positive contribution for every high
-attention patch, or improved classification. A trained variant needs held-out
-channel-ablation and patch-deletion tests, attention-overlap checks, and comparison
-with the unchanged baseline. Existing checkpoints are compatible but have not learned
-this new constraint; they must not be relabeled as class-bound attention models.
-
-Tests: `python -m unittest discover -s tests -v` checks the loss direction, shared
-stochastic masks, RNG preservation, probability normalization, and gradients reaching
-the patch attention parameters. These are implementation tests, not efficacy evidence.
+The tests check loss direction, reuse of stochastic masks, preservation of the outer random state, probability normalization and gradients reaching patch attention.

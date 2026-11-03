@@ -1,1 +1,1 @@
-"""VLR-MIL: concept-guided ordinal multimodal multiple-instance learning."""
+"""TriPath-Lung: semantically guided multimodal ordinal response prediction."""
