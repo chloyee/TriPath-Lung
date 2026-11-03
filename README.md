@@ -2,7 +2,7 @@
 
 TriPath-Lung integrates semantically selected regions from pretreatment H&E biopsies with clinical information to predict three ordered pathological response states: **non-MPR, MPR without pCR (MPR-only), and pCR**. Frozen CONCH features guide tissue selection, hierarchical attention combines regions and slides, and a shared ordinal head integrates tissue and clinical evidence.
 
-This repository implements the manuscript's main-model training logic for user-provided datasets and patient allocations. The workflow starts from cached CONCH features: semantic bag selection, patient-level data loading, multimodal ordinal modeling, internal validation, and checkpoint export.
+This repository implements the manuscript's main-model training logic for user-provided datasets and patient allocations. The workflow starts from cached CONCH features: semantic bag selection, patient-level data loading, multimodal ordinal modeling, internal validation, checkpoint export, and held-out testing.
 
 ## Environment
 
@@ -80,6 +80,23 @@ To run selection and training together, use the candidate cache for `--features-
 
 Clinical preprocessing is fitted on training patients. Internal-validation loss selects the checkpoint. The main configuration uses AdamW with learning rate `5e-5`, weight decay `1e-3`, gradient-norm clipping at `5`, up to `60` epochs and patience `8` with minimum loss improvement `0.001`.
 
+## Test the trained model
+
+Prepare a labeled test manifest and selected feature caches using the same CONCH encoder and text prototypes as training. Assign stable patient identifiers across manifests so the test cohort is separate from both training and model-selection patients.
+
+```bash
+bash scripts/run_test.sh \
+  --checkpoint outputs/tripath_main_seed55/main/best.pt \
+  --manifest data/test_slides.csv \
+  --features-root features/conch_test_selected \
+  --output outputs/tripath_test \
+  --device cuda:0
+```
+
+`tripath-test` and `python -m vlr_mil.evaluate` expose the same arguments. The test entry point restores the model, concept prototypes, ordinal cutpoints and clinical preprocessing directly from the checkpoint. Test labels are used to calculate evaluation metrics. Inference uses evaluation mode with fixed parameters and training-derived clinical normalization.
+
+The output directory contains `test_predictions.csv` (patient-level labels, class probabilities and ordinal scores), `metrics.json` (AUROC, accuracy, F1, sensitivity, specificity and calibration metrics), and `test_provenance.json` (checkpoint/manifest hashes, selected epoch and preprocessing state). Each test run uses a fresh output directory.
+
 ## Model and objective
 
 Visual features, the best-matching text prototype and eight concept percentile features are projected to 128 dimensions. An elementwise gate combines image and text representations using their projections and the maximum raw concept similarity. Concept and normalized positional features are added before a single Transformer layer. Three outcome-directed patch-attention channels form a slide representation; multi-channel attention then combines the patient's slides.
@@ -123,7 +140,7 @@ python -m unittest discover -s tests -v
 python scripts/check_secrets.py
 ```
 
-Tests cover semantic selection, patient separation, training-only clinical preprocessing, the manuscript loss formula, raw-score gating, matched stochastic masks, auxiliary gradients, a six-epoch synthetic training run, and checkpoint-to-prediction consistency. The synthetic run validates the training workflow on a user-defined cohort and allocation.
+Tests cover semantic selection, patient separation, training-only clinical preprocessing, the manuscript loss formula, raw-score gating, matched stochastic masks, auxiliary gradients, a six-epoch synthetic training run, held-out test execution, development/test separation and checkpoint-to-prediction consistency. The synthetic run validates the training workflow on a user-defined cohort and allocation.
 
 ## Publication and license
 

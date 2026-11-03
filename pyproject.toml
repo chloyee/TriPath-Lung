@@ -12,6 +12,7 @@ dependencies = ["numpy==1.26.4", "scikit-learn==1.3.0", "torch==2.4.0"]
 
 [project.scripts]
 tripath-train = "vlr_mil.train:main"
+tripath-test = "vlr_mil.evaluate:main"
 tripath-select = "vlr_mil.selection:main"
 vlr-train = "vlr_mil.train:main"
 vlr-select = "vlr_mil.selection:main"
