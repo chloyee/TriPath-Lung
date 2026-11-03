@@ -69,17 +69,17 @@ class ManuscriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             features = root/'candidates'
-            (features/'GDPH').mkdir(parents=True)
+            (features/'USER_CENTER').mkdir(parents=True)
             rng = np.random.default_rng(33)
             rows = []
             for i in range(9):
                 # Patient 0 has two slides; both stay in the training partition.
                 for j in range(2 if i == 0 else 1):
                     slide = f's{i}_{j}'
-                    rows.append(dict(patient_id=f'p{i}', slide_id=slide, center='GDPH',
+                    rows.append(dict(patient_id=f'p{i}', slide_id=slide, center='USER_CENTER',
                         label=str(i % 3), pathology_type='LUAD', T_stage='T2a',
                         age=str(40+i if i < 6 else 90), pdl1_tps='0.1', pdl1_unit='fraction', smoking_status='0'))
-                    np.savez(features/'GDPH'/f'{slide}.npz',
+                    np.savez(features/'USER_CENTER'/f'{slide}.npz',
                         features=rng.normal(size=(5, 512)).astype('float32'),
                         concept_scores=rng.uniform(-.5, .5, size=(5, 8)).astype('float32'),
                         level0_xy=rng.integers(0, 1000, size=(5, 2)), concept_names=np.array(CONCEPTS))
@@ -90,8 +90,9 @@ class ManuscriptTests(unittest.TestCase):
             split = dict(train=[f'p{i}' for i in range(6)], validation=[f'p{i}' for i in range(6, 9)])
             (root/'split.json').write_text(json.dumps(split))
             config = json.loads((ROOT/'configs/main.json').read_text())
-            config.update(epochs=6, patience=8,
-                          expected_class_counts={'train': [2, 2, 2], 'validation': [1, 1, 1]})
+            self.assertIsNone(config['internal_center'])
+            self.assertIsNone(config['expected_class_counts'])
+            config.update(epochs=6, patience=8)
             (root/'config.json').write_text(json.dumps(config))
             bank = rng.normal(size=(8, 512)).astype('float32')
             bank /= np.linalg.norm(bank, axis=1, keepdims=True)
