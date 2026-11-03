@@ -13,7 +13,7 @@ viable_tumor, artifact, immune_inflamed, tls_like,
 immune_excluded, immune_desert, necrosis, fibrotic_stroma
 ```
 
-Users specify one or more text descriptions for each of these eight concepts. Keep the concept meanings and order above, and use the resulting prototype bank consistently for patch scores and model input. When changing prompts, regenerate both the text prototypes and concept scores, then rerun semantic selection. Retain the text descriptions and encoder preprocessing settings with the cache. The TLS-like concept describes lymphoid morphology; tissue annotation establishes TLS maturation and function.
+Each concept is represented by one or more text descriptions. Keep the concept meanings and order above, and use the resulting prototype bank consistently for patch scores and model input. When changing prompts, regenerate both the text prototypes and concept scores, then rerun semantic selection. Retain the text descriptions and encoder preprocessing settings with the cache. The TLS-like concept describes lymphoid morphology; tissue annotation establishes TLS maturation and function.
 
 ## Slide manifest
 
@@ -22,7 +22,7 @@ Provide one CSV row per slide. A patient's rows share the same clinical variable
 | Field | Encoding |
 |---|---|
 | `patient_id`, `slide_id` | Stable deidentified identifiers |
-| `center` | User-defined center identifier, also used as the feature subdirectory |
+| `center` | Center identifier, also used as the feature subdirectory |
 | `label` | `0` non-MPR; `1` MPR-only; `2` pCR |
 | `pathology_type` | `LUAD`, `LUSC`, `Other`; blank for missing |
 | `T_stage` | Pretreatment `T0`–`T4`; substages such as `T2a` map to `T2` |
@@ -32,7 +32,7 @@ Provide one CSV row per slide. A patient's rows share the same clinical variable
 | `smoking_status` | `0` never; `1` former >10 years; `2` current or cessation within 10 years; blank for missing |
 | `eligible_for_modeling` | Optional: rows with `1` are included |
 
-The model standardizes age and `log1p(100 * pdl1_tps)` using observed training patients, once per patient. Missing continuous values map to zero after standardization. Missing categories map to index zero. Five missingness flags accompany the three category embeddings and the age/TPS features. TPS ≥1% and ≥50% provide additional binary features. If a source records `<1%`, document the conversion convention; the source repository used the interval midpoint, 0.005.
+The model standardizes age and `log1p(100 * pdl1_tps)` using observed training patients, once per patient. Missing continuous values map to zero after standardization. Missing categories map to index zero. Five missingness flags accompany the three category embeddings and the age/TPS features. TPS ≥1% and ≥50% provide additional binary features. For TPS recorded as `<1%`, the interval-midpoint convention encodes the value as `0.005`. Record the conversion convention alongside the manifest.
 
 ## Feature files
 
@@ -50,7 +50,7 @@ Candidate caches supply the first four arrays. The selector generates `selected`
 
 ## Allocation file
 
-The split JSON contains `train` and `validation`, each holding patient ID strings. Choose the split method and proportions for your dataset. Together the lists cover the eligible development manifest exactly once, with each patient assigned to one partition and all three outcomes represented in each partition. For example:
+The split JSON contains `train` and `validation`, each holding patient ID strings. Together the lists cover the eligible development manifest exactly once, with each patient assigned to one partition and all three outcomes represented in each partition. For example:
 
 ```json
 {
@@ -59,7 +59,7 @@ The split JSON contains `train` and `validation`, each holding patient ID string
 }
 ```
 
-The default configuration accepts your cohort size and center identifiers. Optional `expected_class_counts` can record your counts as `{"train": [n0, n1, n2], "validation": [m0, m1, m2]}`. Optional `internal_center` restricts the manifest to the supplied center name. Both options default to `null`.
+Partition sizes and center identifiers are read from the manifest and split file. Optional `expected_class_counts` validates counts as `{"train": [n0, n1, n2], "validation": [m0, m1, m2]}`. Optional `internal_center` restricts the manifest to the supplied center name. Both options default to `null`.
 
 ## Test inputs
 
@@ -67,4 +67,4 @@ Use the same manifest schema for the held-out test cohort, including the three-c
 
 ## Resources accompanying a training run
 
-Keep the deidentified allocation, manifest, feature caches, prototype bank and extraction record together. Source-model weights are obtained under CONCH's access terms. The cached-feature trainer operates without an API service. Store any upstream download credentials in the user's environment, separately from source files and experiment artifacts.
+Keep the deidentified allocation, manifest, feature caches, prototype bank and extraction record together. Source-model weights are obtained under CONCH's access terms. Configure model-download credentials through environment variables.
