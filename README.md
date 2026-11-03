@@ -2,7 +2,7 @@
 
 TriPath-Lung integrates semantically selected regions from pretreatment H&E biopsies with clinical information to predict three ordered pathological response states: **non-MPR, MPR without pCR (MPR-only), and pCR**. Frozen CONCH features guide tissue selection, hierarchical attention combines regions and slides, and a shared ordinal head integrates tissue and clinical evidence.
 
-This repository provides the main-model training workflow from cached CONCH features: semantic bag selection, patient-level data loading, multimodal ordinal modeling, internal validation, and checkpoint export.
+This repository implements the manuscript's main-model training logic for user-provided datasets and patient allocations. The workflow starts from cached CONCH features: semantic bag selection, patient-level data loading, multimodal ordinal modeling, internal validation, and checkpoint export.
 
 ## Environment
 
@@ -28,22 +28,19 @@ The trainer processes one patient per optimization step on the selected device. 
 
 Provide these three resources:
 
-1. A deidentified slide manifest for the GDPH development cohort.
-2. The original patient allocation: 316 training patients and 80 internal-validation patients.
+1. A deidentified slide manifest for your development cohort.
+2. Your patient-level training and validation allocation.
 3. Cached frozen CONCH visual features, raw concept similarities, patch coordinates and the matching text prototype bank.
 
 [Data preparation](docs/data_preparation.md) defines the file formats, clinical encoding and upstream image-processing requirements. [Training settings](docs/training_settings.md) records the architecture and optimization settings.
 
 ### Patient allocation
 
-The split JSON has two keys, `train` and `validation`, each containing an array of patient ID strings matching the manifest. All slides of each patient follow that patient's allocation. The default configuration checks the manuscript's class counts:
+The split JSON has two keys, `train` and `validation`, each containing an array of patient ID strings matching the manifest. Choose the allocation and proportions for your cohort. All slides of each patient follow that patient's allocation. The trainer checks unique IDs, disjoint partitions, complete manifest coverage and representation of all three outcomes in each partition before fitting clinical preprocessing.
 
-| Partition | non-MPR | MPR-only | pCR | Total |
-|---|---:|---:|---:|---:|
-| Training | 136 | 63 | 117 | 316 |
-| Internal validation | 34 | 16 | 30 | 80 |
+The default configuration accepts user-defined center names and cohort sizes. `internal_center` optionally restricts the manifest to one center; `expected_class_counts` optionally checks a user-specified allocation. Both default to `null`. Study patient data and allocations remain private; users prepare inputs from their own datasets.
 
-Use the original allocation to reproduce the development experiment. The trainer validates unique IDs, disjoint partitions, complete manifest coverage and class counts before fitting clinical preprocessing. Prospective and external cohorts are evaluated after model selection.
+CONCH is obtained from its [official repository](https://github.com/mahmoodlab/CONCH). Users define the text descriptions for the eight tissue concepts and generate the matching prototype bank and concept-score caches, following [Data preparation](docs/data_preparation.md).
 
 ### Semantic patch selection
 
@@ -59,7 +56,7 @@ The selector retains up to 512 patches per slide: 60% by support, 20% by the ent
 
 ```bash
 python -m vlr_mil.selection \
-  --manifest data/GDPH_development_slides.csv \
+  --manifest data/development_slides.csv \
   --features-root features/conch_candidates \
   --output features/conch_selected \
   --config configs/selection.json
@@ -71,8 +68,8 @@ The output directory is created for this selection run. Original array order is 
 
 ```bash
 bash scripts/run_train.sh \
-  --manifest data/GDPH_development_slides.csv \
-  --split data/GDPH_patient_split.json \
+  --manifest data/development_slides.csv \
+  --split data/patient_split.json \
   --features-root features/conch_selected \
   --concept-embeddings features/concept_embeddings.npz \
   --output outputs/tripath_main_seed55 \
@@ -126,7 +123,7 @@ python -m unittest discover -s tests -v
 python scripts/check_secrets.py
 ```
 
-Tests cover semantic selection, patient separation, training-only clinical preprocessing, the manuscript loss formula, raw-score gating, matched stochastic masks, auxiliary gradients, a six-epoch synthetic training run, and checkpoint-to-prediction consistency. The synthetic run validates execution; reported clinical metrics are obtained with the study data and original allocation.
+Tests cover semantic selection, patient separation, training-only clinical preprocessing, the manuscript loss formula, raw-score gating, matched stochastic masks, auxiliary gradients, a six-epoch synthetic training run, and checkpoint-to-prediction consistency. The synthetic run validates the training workflow on a user-defined cohort and allocation.
 
 ## Publication and license
 
